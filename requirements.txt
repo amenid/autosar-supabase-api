@@ -1,36 +1,68 @@
-torch>=2.0.0
-huggingface_hub>=0.20.0
-transformers>=4.35.0
-sentence-transformers>=2.2.0
-weaviate-client>=4.14.0
-streamlit>=1.28.0
-python-dotenv>=1.0.0
-ollama>=0.1.0
-openai>=1.0.0
-numpy>=1.24.0
-scikit-learn>=1.3.0
+# ===== AUTOSAR RAG + SUPABASE - VERSION UNIFIÉE =====
+# Résout les conflits entre systèmes RAG et Sessions
+# Compatible Python 3.8+ avec versions harmonisées
 
-
-# AUTOSAR Session API - Dépendances Supabase (100% GRATUIT)
-# Compatible Python 3.8+
-
-# Framework Web
+# ===== FRAMEWORK WEB =====
 Flask==2.3.3
 Flask-CORS==4.0.0
+streamlit>=1.28.0,<2.0.0
 
-# Base de données Supabase (100% gratuit)
+# ===== BASE DE DONNÉES =====
+# Supabase pour sessions sécurisées
 supabase==1.2.0
 
-# Utilitaires
-requests==2.31.0
-python-dotenv==1.0.0
+# Weaviate pour stockage vectoriel RAG (compatible avec Supabase)
+weaviate-client>=4.14.0,<5.0.0
 
-# Serveur de production
+# ===== MACHINE LEARNING / RAG =====
+# PyTorch - version optimisée
+torch>=2.0.0,<2.3.0
+torchvision>=0.15.0,<0.18.0
+
+# Transformers et Hugging Face - versions compatibles
+transformers>=4.35.0,<4.42.0
+sentence-transformers>=2.2.0,<3.0.0
+huggingface_hub>=0.20.0,<0.24.0
+
+# Tokenizers compatible
+tokenizers>=0.15.0,<0.20.0
+safetensors>=0.3.0,<0.5.0
+
+# ===== LLM ET APIs =====
+# LLM local
+ollama>=0.1.0,<1.0.0
+
+# API OpenAI
+openai>=1.0.0,<2.0.0
+
+# ===== CALCULS SCIENTIFIQUES =====
+numpy>=1.24.0,<2.0.0
+scikit-learn>=1.3.0,<2.0.0
+
+# ===== UTILITAIRES =====
+# Version unique pour éviter conflits
+requests>=2.31.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+
+# Performance et monitoring
+psutil>=5.9.0,<6.0.0
+
+# ===== SERVEUR DE PRODUCTION =====
 gunicorn==21.2.0
 
-# Dépendances automatiques (installées par supabase)
-# postgrest-py>=0.10.8
-# gotrue-py>=1.0.1
-# realtime-py>=0.0.5
-# storage3>=0.5.4
-# supafunc-py>=0.2.3
+# ===== OPTIMISATIONS POUR RENDER =====
+# Versions CPU-only pour réduire la taille
+# torch-audio supprimé (pas nécessaire)
+# torchtext supprimé (pas nécessaire)
+
+# ===== CONFIGURATION SPÉCIALE RENDER =====
+# Si échec sur Render FREE, utiliser ces optimisations :
+# 
+# 1. Variables d'environnement Render à ajouter :
+#    TORCH_INDEX_URL = https://download.pytorch.org/whl/cpu
+#    PIP_EXTRA_INDEX_URL = https://download.pytorch.org/whl/cpu
+#
+# 2. Commande build alternative :
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt
+#
+# 3. Si toujours échec → Upgrade vers Render Pro ($7/mois)
