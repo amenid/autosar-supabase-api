@@ -33,9 +33,9 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 # Configuration Email (Gmail gratuit ou Brevo gratuit)
 SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
-SMTP_USERNAME = os.getenv('SMTP_USERNAME', 'votre.email@gmail.com')
-SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'votre-mot-de-passe-app')
-FROM_EMAIL = os.getenv('FROM_EMAIL', 'votre.email@gmail.com')
+SMTP_USERNAME = os.getenv('SMTP_USERNAME', '8a993d003@smtp-brevo.com')
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'hX2nbHa5DcUPWOzt')
+FROM_EMAIL = os.getenv('FROM_EMAIL', 'aydiameni@sfax.r-iset.tn')
 
 # Configuration des règles de sécurité
 MAX_ERRORS_BEFORE_BLOCK = 3
@@ -763,10 +763,16 @@ if __name__ == '__main__':
     print(f"⏰ Sessions: Durée {SESSION_DURATION_HOURS}h")
     print(f"💰 Coût: 100% GRATUIT avec Supabase !")
     
-    # Démarrer l'application
-    app.run(
-        host='0.0.0.0',
-        port=PORT,
-        debug=DEBUG_MODE,
-        threaded=True
-    )
+    # Démarrer l'application (FIXÉ pour Windows/Thread)
+    try:
+        app.run(
+            host='0.0.0.0',
+            port=PORT,
+            debug=False,  # Désactiver debug pour éviter les problèmes de thread
+            threaded=True,
+            use_reloader=False  # Désactiver le reloader qui cause l'erreur signal
+        )
+    except Exception as e:
+        print(f"❌ Erreur de démarrage: {e}")
+        print("💡 Essayez de lancer avec: python -m flask run")
+        print("💡 Ou utilisez: gunicorn app:app --host 0.0.0.0 --port 8765")
