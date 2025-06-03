@@ -1,19 +1,33 @@
-# AUTOSAR Secure RAG API - Requirements unifié
-# Compatible Python 3.8+
+# AUTOSAR Secure RAG API - Requirements optimisé pour le cloud
+# Compatible Python 3.8+ et déploiement sur Render/Heroku/Vercel
 
 # Framework Web
 Flask==2.3.3
 Flask-CORS==4.0.0
 
-# Base de données Supabase (100% gratuit)
-supabase==1.2.0
+# Base de données (optionnel - remplacé par système en mémoire)
+# supabase==1.2.0
 
 # Sécurité et chiffrement - version flexible
 cryptography>=40.0.0
 
-# Utilitaires
+# Utilitaires essentiels
 requests==2.31.0
 python-dotenv==1.0.0
 
 # Serveur de production
 gunicorn==21.2.0
+
+# Utilitaires pour le parsing (légers)
+# Pas de PyPDF2 ou python-docx pour réduire la taille
+
+# ❌ SUPPRIMÉ - Trop lourd pour le cloud :
+# torch>=2.0.0
+# sentence-transformers
+# faiss-cpu
+# numpy (uniquement si utilisé par d'autres libs)
+# PyPDF2
+# python-docx
+
+# ✅ GARDÉ - Léger et essentiel :
+# Flask, requests, cryptography, gunicorn, python-dotenv
