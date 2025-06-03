@@ -1,3 +1,22 @@
+
+
+
+# AUTOSAR Session API - Dépendances Supabase (100% GRATUIT)
+# Compatible Python 3.8+
+
+# Framework Web
+Flask==2.3.3
+Flask-CORS==4.0.0
+
+# Base de données Supabase (100% gratuit)
+supabase==1.2.0
+
+# Utilitaires
+requests==2.31.0
+python-dotenv==1.0.0
+
+# Serveur de production
+gunicorn==21.2.0
 # Requirements pour AUTOSAR Secure RAG API
 flask==3.0.0
 flask-cors==4.0.0
@@ -5,3 +24,9 @@ supabase==2.3.0
 cryptography==41.0.8
 requests==2.31.0
 gunicorn==21.2.0
+# Dépendances automatiques (installées par supabase)
+# postgrest-py>=0.10.8
+# gotrue-py>=1.0.1
+# realtime-py>=0.0.5
+# storage3>=0.5.4
+# supafunc-py>=0.2.3
