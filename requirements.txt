@@ -8,8 +8,8 @@ Flask-CORS==4.0.0
 # Base de données Supabase (100% gratuit)
 supabase==1.2.0
 
-# Sécurité et chiffrement
-cryptography==41.0.8
+# Sécurité et chiffrement - version flexible
+cryptography>=40.0.0
 
 # Utilitaires
 requests==2.31.0
@@ -17,10 +17,3 @@ python-dotenv==1.0.0
 
 # Serveur de production
 gunicorn==21.2.0
-
-# Dépendances automatiques (installées par supabase)
-# postgrest-py>=0.10.8
-# gotrue-py>=1.0.1
-# realtime-py>=0.5.4
-# storage3>=0.5.4
-# supafunc-py>=0.2.3
