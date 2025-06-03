@@ -21,7 +21,6 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, Client
