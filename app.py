@@ -1,934 +1,933 @@
-"""
-AUTOSAR RAG API - VERSION FINALE OPTIMISÉE CLOUD
-Sécurité + RAG + Chiffrement + Protection (Sans complexités déploiement)
-Version 5.0.0 - Cloud Optimized - Deploy Ready
-"""
+import asyncio
+import streamlit as st
 
+# CONFIGURATION INITIALE - DOIT ÊTRE EN PREMIER
+st.set_page_config(
+    page_title="🚗 AUTOSAR RAG Assistant",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Configuration AsyncIO
+try:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+except:
+    pass
+
+# Imports principaux
 import os
-import time
-import json
-import secrets
-import hashlib
+import torch
+from datetime import datetime
 import smtplib
-import requests
-import base64
-import re
-from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Dict, List, Tuple, Optional
+from email.mime.base import MIMEBase
+from email import encoders
+import ssl
+import time
+import re
+from typing import List, Dict, Any, Optional
+import logging
+import secrets
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+# Configuration Torch
+try:
+    torch._C._disable_internal_usage_checks = True
+except:
+    pass
 
-# Imports pour chiffrement (compatible cloud)
-from cryptography.fernet import Fernet
-from dotenv import load_dotenv
+# Configuration Streamlit
+try:
+    st.set_option('server.fileWatcherType', 'none')
+except:
+    pass
 
-load_dotenv()
+# Imports pour RAG
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import faiss
+import pickle
+from pathlib import Path
+import PyPDF2
+import docx
+import requests
+import warnings
 
-app = Flask(__name__)
-CORS(app)
+# Suppression des warnings
+warnings.filterwarnings('ignore')
 
-# ===== CONFIGURATION CLOUD-FRIENDLY =====
-DEBUG_MODE = os.getenv('DEBUG', 'False').lower() == 'true'
-PORT = int(os.getenv('PORT', 8765))
+# Configuration globale EMAIL (du code 2)
+SMTP_CONFIG = {
+    'SMTP_SERVER': os.getenv('SMTP_SERVER', 'smtp-relay.brevo.com'),
+    'SMTP_PORT': int(os.getenv('SMTP_PORT', 587)),
+    'SMTP_USERNAME': os.getenv('SMTP_USERNAME', '7d7544008@smtp-brevo.com'),
+    'SMTP_PASSWORD': os.getenv('SMTP_PASSWORD', 'JMjV80bfWNQhrPCK'),
+    'FROM_EMAIL': os.getenv('FROM_EMAIL', 'ameniaydiii@gmail.com')
+}
 
-# Configuration Email BREVO (simplifié)
-SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp-relay.brevo.com')
-SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
-SMTP_USERNAME = os.getenv('SMTP_USERNAME', '7d7544008@smtp-brevo.com')
-SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'JMjV80bfWNQhrPCK')
-FROM_EMAIL = os.getenv('FROM_EMAIL', 'ameniaydiii@gmail.com')
+# Configuration des logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('chatbot.log'),
+        logging.StreamHandler()
+    ]
+)
 
-# Configuration de sécurité (simplifié)
-MAX_ATTACKS_BEFORE_BLOCK = 3
-SESSION_DURATION_HOURS = 24
-VERIFICATION_CODE_EXPIRY_MINUTES = 10
-SECURITY_TEAM_EMAILS = ['rahmafiras01@gmail.com', 'm24129370@gmail.com']
+class DocumentChunk:
+    """Représente un chunk de document avec métadonnées"""
+    def __init__(self, content: str, metadata: dict):
+        self.content = content
+        self.metadata = metadata
+        self.properties = metadata  # Pour compatibilité
 
-print(f"🚀 Starting AUTOSAR Cloud-Optimized RAG API...")
-
-# ===== STOCKAGE EN MÉMOIRE (Cloud-Friendly) =====
-class InMemoryStorage:
-    """Stockage en mémoire pour remplacer les DB complexes"""
+class RAGRetriever:
+    """Système RAG complet pour AUTOSAR"""
     
-    def __init__(self):
-        self.users = {}
-        self.sessions = {}
-        self.verification_codes = {}
-        self.attacks = {}
-        self.blocked_users = set()
-        print("💾 In-memory storage initialized")
-    
-    def clean_expired_data(self):
-        """Nettoie les données expirées"""
-        current_time = datetime.now(timezone.utc)
+    def __init__(self, documents_path: str = "autosar_documents"):
+        self.documents_path = Path(documents_path)
+        self.documents_path.mkdir(exist_ok=True)
         
-        # Nettoyer codes expirés
-        expired_codes = [
-            email for email, data in self.verification_codes.items()
-            if current_time > datetime.fromisoformat(data['expires_at'].replace('Z', '+00:00'))
-        ]
-        for email in expired_codes:
-            del self.verification_codes[email]
+        # Modèle d'embedding
+        print("🔄 Chargement du modèle d'embedding...")
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         
-        # Nettoyer sessions expirées
-        expired_sessions = [
-            sid for sid, data in self.sessions.items()
-            if current_time > datetime.fromisoformat(data['expires_at'].replace('Z', '+00:00'))
-        ]
-        for sid in expired_sessions:
-            del self.sessions[sid]
-
-# ===== SYSTÈME DE CHIFFREMENT SIMPLIFIÉ =====
-class CloudEncryption:
-    """Système de chiffrement optimisé pour le cloud"""
+        # Base de données vectorielle
+        self.vector_db_path = "autosar_vectors.faiss"
+        self.metadata_path = "autosar_metadata.pkl"
+        
+        # Chunks et métadonnées
+        self.chunks = []
+        self.chunk_embeddings = None
+        self.faiss_index = None
+        
+        # Initialiser ou charger la base existante
+        self._initialize_or_load_database()
+        
+        print(f"✅ RAG initialisé avec {len(self.chunks)} chunks")
     
-    def __init__(self):
-        # Utiliser variable d'environnement ou générer
-        key_env = os.getenv('ENCRYPTION_KEY')
-        if key_env:
-            self.key = key_env.encode()
+    def _initialize_or_load_database(self):
+        """Initialise ou charge la base de données existante"""
+        if os.path.exists(self.vector_db_path) and os.path.exists(self.metadata_path):
+            print("📂 Chargement de la base vectorielle existante...")
+            self._load_existing_database()
         else:
-            self.key = Fernet.generate_key()
-        
-        self.cipher_suite = Fernet(self.key)
-        print("🔐 Cloud encryption initialized")
+            print("🆕 Création d'une nouvelle base vectorielle...")
+            self._create_sample_autosar_content()
+            self._build_vector_database()
     
-    def encrypt_message(self, message: str) -> str:
+    def _load_existing_database(self):
+        """Charge la base vectorielle existante"""
         try:
-            encrypted = self.cipher_suite.encrypt(message.encode('utf-8'))
-            return base64.urlsafe_b64encode(encrypted).decode('utf-8')
+            # Charger l'index FAISS
+            self.faiss_index = faiss.read_index(self.vector_db_path)
+            
+            # Charger les métadonnées
+            with open(self.metadata_path, 'rb') as f:
+                self.chunks = pickle.load(f)
+            
+            print(f"✅ Base vectorielle chargée: {len(self.chunks)} chunks")
+            
         except Exception as e:
-            print(f"❌ Encryption error: {e}")
-            return message  # Fallback non chiffré
+            print(f"❌ Erreur chargement base: {e}")
+            self._create_sample_autosar_content()
+            self._build_vector_database()
     
-    def decrypt_message(self, encrypted_message: str) -> str:
-        try:
-            encrypted_bytes = base64.urlsafe_b64decode(encrypted_message.encode('utf-8'))
-            decrypted = self.cipher_suite.decrypt(encrypted_bytes)
-            return decrypted.decode('utf-8')
-        except Exception as e:
-            print(f"❌ Decryption error: {e}")
-            return encrypted_message
+    def _create_sample_autosar_content(self):
+        """Crée du contenu AUTOSAR de démonstration"""
+        sample_content = {
+            "AUTOSAR_Architecture_Overview.txt": """
+AUTOSAR (AUTomotive Open System ARchitecture) Overview
 
-# ===== SYSTÈME DE SÉCURITÉ INTELLIGENT =====
-class SmartSecurityFilter:
-    """Filtrage intelligent XSS/SQL avec contexte technique"""
-    
-    def __init__(self):
-        # Patterns malveillants (excluant contexte technique)
-        self.malicious_patterns = {
-            'xss': [
-                r'<script[^>]*>(?!.*?(exemple|example|demo|test))',
-                r'javascript:(?!.*?(exemple|example|demo))',
-                r'onload\s*=(?!.*?(exemple|example))',
-                r'document\.cookie(?!.*?(exemple|example))',
-                r'eval\s*\((?!.*?(exemple|example))',
-            ],
-            'sql': [
-                r'\bunion\s+select\b(?!.*?(exemple|example|demo))',
-                r'\bdrop\s+table\b(?!.*?(exemple|example))',
-                r'\bdelete\s+from\b(?!.*?(exemple|example))',
-                r'--\s*(?!.*?(exemple|example|comment))',
-                r'1\s*=\s*1(?!.*?(exemple|example))',
-            ]
-        }
-        
-        self.technical_keywords = [
-            'autosar', 'ecu', 'can', 'lin', 'flexray', 'ethernet', 'bsw', 'rte',
-            'example', 'exemple', 'demo', 'test', 'documentation', 'tutorial'
-        ]
-        print("🛡️ Smart security filter initialized")
-    
-    def is_technical_context(self, text: str) -> bool:
-        """Détecte si c'est un contexte technique légitime"""
-        text_lower = text.lower()
-        technical_score = sum(1 for keyword in self.technical_keywords if keyword in text_lower)
-        return technical_score >= 2
-    
-    def analyze_security_threats(self, text: str) -> Dict:
-        """Analyse complète des menaces avec contexte"""
-        threats = []
-        text_lower = text.lower()
-        is_technical = self.is_technical_context(text)
-        
-        # XSS Check
-        for pattern in self.malicious_patterns['xss']:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                threats.append(f"XSS malveillant: {pattern}")
-        
-        # SQL Check
-        for pattern in self.malicious_patterns['sql']:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                threats.append(f"SQL Injection: {pattern}")
-        
-        # Contexte technique = plus tolérant
-        if is_technical and 'exemple' in text_lower or 'example' in text_lower:
-            threats = [t for t in threats if 'malveillant' in t]  # Garder seulement les vraiment malveillants
-        
-        risk_level = "HIGH" if len(threats) > 2 else "MEDIUM" if threats else "LOW"
-        
-        return {
-            'threats': threats,
-            'risk_level': risk_level,
-            'is_safe': len(threats) == 0,
-            'is_technical_context': is_technical,
-            'blocked': risk_level == 'HIGH'
-        }
+AUTOSAR is a global partnership of automotive manufacturers, suppliers, and other companies from the electronics, semiconductor and software industry. The architecture consists of three main layers:
 
-# ===== SYSTÈME RAG SIMPLIFIÉ =====
-class CloudRAGSystem:
-    """Système RAG optimisé pour le cloud (sans dépendances lourdes)"""
-    
-    def __init__(self):
-        self.knowledge_base = self._create_autosar_knowledge()
-        self.chunks = self._create_chunks()
-        print(f"🧠 Cloud RAG initialized with {len(self.chunks)} chunks")
-    
-    def _create_autosar_knowledge(self):
-        return {
-            "architecture": [
-                "AUTOSAR (AUTomotive Open System ARchitecture) est une architecture logicielle standardisée pour l'industrie automobile.",
-                "L'architecture AUTOSAR Classic comprend trois couches : Application Layer, Runtime Environment (RTE), et Basic Software (BSW).",
-                "AUTOSAR Adaptive Platform est conçue pour les applications haute performance comme la conduite autonome.",
-                "Le Runtime Environment (RTE) fait l'interface entre les composants logiciels et le Basic Software.",
-                "Basic Software (BSW) fournit les services de base : communication, gestion mémoire, diagnostics."
-            ],
-            "communication": [
-                "AUTOSAR supporte CAN, LIN, FlexRay et Ethernet Automotive pour la communication inter-ECU.",
-                "CAN permet une communication temps réel jusqu'à 1 Mbps, CAN-FD jusqu'à 8 Mbps.",
-                "FlexRay offre une communication déterministe jusqu'à 10 Mbps pour applications critiques.",
-                "Ethernet Automotive permet des débits élevés (100 Mbps à 1 Gbps) pour multimédia.",
-                "LIN est utilisé pour applications moins critiques avec débit maximum 20 kbps."
-            ],
-            "security": [
-                "AUTOSAR intègre des mécanismes de cybersécurité : authentification, chiffrement, détection d'intrusion.",
-                "Sécurité fonctionnelle ISO 26262 intégrée pour comportement sûr en cas de défaillance.",
-                "Secure Boot assure l'intégrité logicielle au démarrage avec vérification d'authenticité.",
-                "Hardware Security Module (HSM) fournit services cryptographiques matériels sécurisés.",
-                "Intrusion Detection System (IDS) surveille le réseau pour détecter activités suspectes."
-            ],
-            "rfc_standards": [
-                "AUTOSAR intègre les standards RFC pour communication IP : RFC 791 (IPv4), RFC 793 (TCP), RFC 768 (UDP).",
-                "RFC 2616 (HTTP) utilisé pour interfaces RESTful et mises à jour over-the-air (OTA).",
-                "RFC 6455 (WebSocket) permet communication full-duplex temps réel véhicule-cloud.",
-                "Sécurité RFC : RFC 5246 (TLS 1.2), RFC 8446 (TLS 1.3) pour communications chiffrées.",
-                "Protocoles SOME/IP utilisent UDP/TCP selon RFC pour middleware orienté services."
-            ],
-            "development": [
-                "AUTOSAR utilise Model-Based Development avec MATLAB/Simulink et outils de configuration.",
-                "Méthodologie AUTOSAR suit processus en V : spécification, implémentation, intégration, validation.",
-                "Software Component (SWC) est l'unité de base encapsulant logique métier et interfaces.",
-                "ARXML (AUTOSAR XML) format standard pour échanger descriptions d'architecture entre outils.",
-                "Basic Software Configuration permet adapter modules BSW aux besoins projet et matériel."
-            ],
-            "diagnostics": [
-                "AUTOSAR implémente services diagnostic UDS (Unified Diagnostic Services) selon ISO 14229.",
-                "Diagnostic Communication Manager (DCM) gère communications entre outil externe et ECU.",
-                "Diagnostic Event Manager (DEM) collecte, stocke et gère codes d'erreur DTC.",
-                "Function Inhibition Manager (FIM) désactive fonctions en cas de défaillance détectée.",
-                "On-Board Diagnostics (OBD) permet surveillance continue systèmes émissions."
-            ]
+1. Application Layer
+- Software Components (SWCs)
+- AUTOSAR Runtime Environment (RTE)
+- Complex Device Drivers (CDD)
+
+2. Runtime Environment (RTE)
+- Communication abstraction
+- Service-oriented communication
+- Event-driven communication
+
+3. Basic Software (BSW)
+- Operating System (OS)
+- Communication Stack
+- Memory Stack
+- I/O Hardware Abstraction
+
+Key Benefits:
+- Standardization across automotive industry
+- Improved software reusability
+- Enhanced modularity and scalability
+- Better integration of software components
+""",
+            
+            "AUTOSAR_Communication_Stack.txt": """
+AUTOSAR Communication Stack
+
+The AUTOSAR communication stack enables efficient data exchange between ECUs:
+
+1. CAN Communication
+- Controller Area Network protocol
+- Frame formats: Standard (11-bit) and Extended (29-bit)
+- Error handling and arbitration mechanisms
+
+2. Ethernet Communication
+- IEEE 802.3 standard support
+- TCP/IP and UDP protocols
+- Time-sensitive networking (TSN)
+
+3. LIN Communication
+- Local Interconnect Network
+- Master-slave architecture
+- Low-cost communication for non-critical systems
+
+Communication Services:
+- Diagnostic Communication Manager (DCM)
+- Network Management (NM)
+- Communication Security (SecOC)
+- Service Discovery (SD)
+
+Protocol Data Units (PDUs):
+- I-PDU: Interaction PDU
+- N-PDU: Network PDU
+- Transport Protocol handling
+""",
+            
+            "RFC_Standards_Integration.txt": """
+RFC Standards in AUTOSAR Context
+
+AUTOSAR integrates various RFC standards for communication protocols:
+
+RFC 791 - Internet Protocol (IP)
+- IPv4 addressing and routing
+- Packet fragmentation and reassembly
+- Integration with AUTOSAR Ethernet stack
+
+RFC 793 - Transmission Control Protocol (TCP)
+- Reliable, connection-oriented communication
+- Flow control and congestion management
+- Used in AUTOSAR for diagnostic services
+
+RFC 768 - User Datagram Protocol (UDP)
+- Connectionless communication protocol
+- Low overhead for real-time applications
+- SOME/IP communication over UDP
+
+Security RFCs:
+- RFC 5246 (TLS 1.2)
+- RFC 8446 (TLS 1.3)
+- RFC 3280 (PKI Certificate validation)
+""",
+            
+            "AUTOSAR_Security.txt": """
+AUTOSAR Security Framework
+
+Cybersecurity is crucial in modern automotive systems:
+
+1. Secure Communication
+- Message Authentication Codes (MAC)
+- Encryption and decryption services
+- Key management infrastructure
+
+2. Secure Boot Process
+- Verified boot chain
+- Code integrity validation
+- Hardware Security Module (HSM) integration
+
+3. Intrusion Detection
+- Anomaly detection algorithms
+- Network traffic monitoring
+- Incident response procedures
+
+Security Modules:
+- Cryptographic Service Manager (CSM)
+- Secure Onboard Communication (SecOC)
+- Key Manager (KeyM)
+- Certificate Manager (CertM)
+
+Compliance Standards:
+- ISO/SAE 21434 (Cybersecurity Engineering)
+- UN-R155 (Cybersecurity Management System)
+- UN-R156 (Software Update Management System)
+"""
         }
+        
+        # Créer les fichiers de démonstration
+        for filename, content in sample_content.items():
+            file_path = self.documents_path / filename
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        print(f"📝 {len(sample_content)} documents AUTOSAR créés")
     
-    def _create_chunks(self):
-        """Crée des chunks de connaissances avec scoring"""
+    def load_documents(self):
+        """Charge tous les documents du répertoire"""
+        documents = []
+        
+        for file_path in self.documents_path.glob("*"):
+            if file_path.suffix.lower() in ['.txt', '.pdf', '.docx', '.md']:
+                try:
+                    content = self._extract_text(file_path)
+                    if content.strip():
+                        documents.append({
+                            'content': content,
+                            'source': file_path.name,
+                            'path': str(file_path)
+                        })
+                        print(f"✅ Chargé: {file_path.name}")
+                except Exception as e:
+                    print(f"❌ Erreur chargement {file_path.name}: {e}")
+        
+        print(f"📚 {len(documents)} documents chargés")
+        return documents
+    
+    def _extract_text(self, file_path: Path) -> str:
+        """Extrait le texte selon le type de fichier"""
+        if file_path.suffix.lower() == '.txt' or file_path.suffix.lower() == '.md':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        
+        elif file_path.suffix.lower() == '.pdf':
+            text = ""
+            try:
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+            except:
+                print(f"⚠️ Erreur lecture PDF: {file_path.name}")
+            return text
+        
+        elif file_path.suffix.lower() == '.docx':
+            try:
+                doc = docx.Document(file_path)
+                text = ""
+                for paragraph in doc.paragraphs:
+                    text += paragraph.text + "\n"
+                return text
+            except:
+                print(f"⚠️ Erreur lecture DOCX: {file_path.name}")
+                return ""
+        
+        return ""
+    
+    def create_chunks(self, documents: List[Dict]) -> List[DocumentChunk]:
+        """Divise les documents en chunks avec overlap"""
         chunks = []
-        chunk_id = 0
+        chunk_size = 500
+        overlap = 50
         
-        for category, contents in self.knowledge_base.items():
-            for content in contents:
-                chunks.append({
-                    'id': chunk_id,
-                    'content': content,
-                    'category': category,
-                    'keywords': self._extract_keywords(content),
-                    'source': f"autosar_{category}_guide.pdf"
-                })
-                chunk_id += 1
+        for doc in documents:
+            content = doc['content']
+            words = content.split()
+            
+            for i in range(0, len(words), chunk_size - overlap):
+                chunk_words = words[i:i + chunk_size]
+                chunk_content = ' '.join(chunk_words)
+                
+                if len(chunk_content.strip()) > 50:
+                    chunk = DocumentChunk(
+                        content=chunk_content,
+                        metadata={
+                            'source': doc['source'],
+                            'path': doc['path'],
+                            'chunk_index': len(chunks),
+                            'word_count': len(chunk_words)
+                        }
+                    )
+                    chunks.append(chunk)
         
+        print(f"✂️ {len(chunks)} chunks créés")
         return chunks
     
-    def _extract_keywords(self, text):
-        """Extrait mots-clés AUTOSAR du texte"""
-        keywords = ['autosar', 'ecu', 'can', 'lin', 'flexray', 'ethernet', 'bsw', 'rte', 
-                   'swc', 'hsm', 'tcp', 'udp', 'rfc', 'security', 'adaptive', 'classic',
-                   'uds', 'dcm', 'dem', 'fim', 'obd', 'iso', 'some/ip']
-        text_lower = text.lower()
-        return [kw for kw in keywords if kw in text_lower]
+    def _build_vector_database(self):
+        """Construit la base de données vectorielle"""
+        # Charger les documents
+        documents = self.load_documents()
+        if not documents:
+            print("⚠️ Aucun document trouvé")
+            return
+        
+        # Créer les chunks
+        self.chunks = self.create_chunks(documents)
+        if not self.chunks:
+            print("⚠️ Aucun chunk créé")
+            return
+        
+        # Générer les embeddings
+        print("🔄 Génération des embeddings...")
+        chunk_texts = [chunk.content for chunk in self.chunks]
+        embeddings = self.embedding_model.encode(chunk_texts, show_progress_bar=True)
+        
+        # Créer l'index FAISS
+        dimension = embeddings.shape[1]
+        self.faiss_index = faiss.IndexFlatIP(dimension)
+        
+        # Normaliser pour cosine similarity
+        faiss.normalize_L2(embeddings)
+        self.faiss_index.add(embeddings.astype('float32'))
+        
+        # Sauvegarder
+        faiss.write_index(self.faiss_index, self.vector_db_path)
+        with open(self.metadata_path, 'wb') as f:
+            pickle.dump(self.chunks, f)
+        
+        print(f"💾 Base vectorielle sauvegardée avec {len(self.chunks)} chunks")
     
-    def search_chunks(self, query: str, top_k: int = 3) -> List[Dict]:
-        """Recherche simple mais efficace par mots-clés"""
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        scored_chunks = []
+    def hybrid_search(self, query: str, top_k: int = 5) -> List[DocumentChunk]:
+        """Recherche hybride (vectorielle + mot-clés)"""
+        if not self.faiss_index or not self.chunks:
+            print("⚠️ Base vectorielle non initialisée")
+            return []
+        
+        # Recherche vectorielle
+        query_embedding = self.embedding_model.encode([query])
+        faiss.normalize_L2(query_embedding)
+        
+        scores, indices = self.faiss_index.search(query_embedding.astype('float32'), top_k * 2)
+        
+        # Récupérer les chunks
+        vector_results = []
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < len(self.chunks):
+                chunk = self.chunks[idx]
+                vector_results.append((chunk, float(score)))
+        
+        # Recherche par mots-clés
+        query_words = set(query.lower().split())
+        keyword_results = []
         
         for chunk in self.chunks:
-            score = 0
-            content_lower = chunk['content'].lower()
-            
-            # Score basé sur mots-clés
-            for keyword in chunk['keywords']:
-                if keyword in query_lower:
-                    score += 5
-            
-            # Score basé sur mots de la requête
-            for word in query_words:
-                if len(word) > 2 and word in content_lower:
-                    score += content_lower.count(word) * 2
-            
-            # Bonus si catégorie correspond
-            if chunk['category'] in query_lower:
-                score += 3
-            
-            if score > 0:
-                scored_chunks.append((chunk, score))
+            chunk_words = set(chunk.content.lower().split())
+            overlap = len(query_words.intersection(chunk_words))
+            if overlap > 0:
+                keyword_score = overlap / len(query_words)
+                keyword_results.append((chunk, keyword_score))
         
-        # Trier et retourner top_k
-        scored_chunks.sort(key=lambda x: x[1], reverse=True)
-        return [chunk for chunk, score in scored_chunks[:top_k]]
+        # Combiner les résultats
+        combined_scores = {}
+        
+        # Ajouter scores vectoriels
+        for chunk, score in vector_results:
+            chunk_id = id(chunk)
+            combined_scores[chunk_id] = {'chunk': chunk, 'vector_score': score, 'keyword_score': 0}
+        
+        # Ajouter scores mots-clés
+        for chunk, score in keyword_results:
+            chunk_id = id(chunk)
+            if chunk_id in combined_scores:
+                combined_scores[chunk_id]['keyword_score'] = score
+            else:
+                combined_scores[chunk_id] = {'chunk': chunk, 'vector_score': 0, 'keyword_score': score}
+        
+        # Score final combiné
+        final_results = []
+        for data in combined_scores.values():
+            final_score = 0.7 * data['vector_score'] + 0.3 * data['keyword_score']
+            final_results.append((data['chunk'], final_score))
+        
+        # Trier par score final
+        final_results.sort(key=lambda x: x[1], reverse=True)
+        
+        return [chunk for chunk, score in final_results[:top_k]]
     
-    def generate_answer(self, query: str, chunks: List[Dict]) -> str:
-        """Génère réponse basée sur chunks trouvés"""
+    def generate_answer(self, query: str, chunks: List[DocumentChunk], 
+                       model_type: str = "deepseek-r1:7b", api_key: str = None, 
+                       temperature: float = 0.3) -> str:
+        """Génère une réponse basée sur les chunks récupérés"""
+        
         if not chunks:
-            return f"""❌ Aucune information trouvée pour "{query}".
-
-🔍 **Essayez des questions sur :**
-- **Architecture AUTOSAR** : RTE, BSW, SWC, Adaptive Platform
-- **Communication** : CAN, LIN, FlexRay, Ethernet
-- **Sécurité** : HSM, SecOC, ISO 26262, cybersécurité
-- **Standards RFC** : TCP/IP, HTTP, WebSocket, TLS
-- **Développement** : ARXML, Model-Based, ASPICE
-- **Diagnostics** : UDS, DCM, DEM, OBD
-
-💡 **Exemples de questions :**
-- "Qu'est-ce que l'architecture AUTOSAR ?"
-- "Comment fonctionne la communication CAN ?"
-- "Qu'est-ce que le RTE ?"
-- "Comment fonctionne SecOC ?"
-"""
-
-        # Construire réponse structurée
-        response = f"# 🚗 Réponse AUTOSAR : {query}\n\n"
+            return "❌ Aucun contexte pertinent trouvé dans la base de connaissances AUTOSAR."
         
-        for i, chunk in enumerate(chunks, 1):
-            response += f"## {i}. {chunk['category'].replace('_', ' ').title()}\n\n"
-            response += f"{chunk['content']}\n\n"
-            
-            if i < len(chunks):
-                response += "---\n\n"
+        # Construire le contexte
+        context = "\n\n".join([
+            f"📄 **Source: {chunk.metadata['source']}**\n{chunk.content}"
+            for chunk in chunks
+        ])
         
-        # Sources et métadonnées
-        sources = list(set(chunk['source'] for chunk in chunks))
-        categories = list(set(chunk['category'] for chunk in chunks))
+        # Prompt système pour AUTOSAR
+        system_prompt = """Tu es un expert AUTOSAR (AUTomotive Open System ARchitecture) et des standards RFC. 
+        Réponds de manière précise et technique en utilisant UNIQUEMENT les informations fournies dans le contexte.
         
-        response += f"\n📚 **Sources :** {', '.join(sources)}\n"
-        response += f"🏷️ **Catégories :** {', '.join(categories)}\n"
-        response += f"⏰ **Généré :** {datetime.now().strftime('%H:%M:%S')}"
+        Instructions:
+        - Utilise le contexte fourni pour répondre
+        - Cite les sources quand nécessaire
+        - Sois précis et technique
+        - Si l'information n'est pas dans le contexte, dis-le clairement
+        - Formate ta réponse en markdown pour une meilleure lisibilité"""
         
-        return response
-
-# ===== SYSTÈME D'ALERTES SIMPLIFIÉ =====
-class SimpleAlertSystem:
-    """Système d'alertes email simplifié pour le cloud"""
-    
-    def __init__(self):
-        self.last_alert_time = 0
-        self.min_interval = 300  # 5 minutes
-        print("🚨 Simple alert system initialized")
-    
-    def send_attack_alert(self, user_email: str, attack_info: Dict) -> bool:
-        """Envoie alerte simple à l'équipe sécurité"""
-        current_time = time.time()
-        if current_time - self.last_alert_time < self.min_interval:
-            return False  # Rate limited
+        # Prompt utilisateur
+        user_prompt = f"""
+        **Question:** {query}
+        
+        **Contexte AUTOSAR disponible:**
+        {context}
+        
+        **Réponse détaillée:**
+        """
         
         try:
-            subject = f"🚨 AUTOSAR Security - Attack from {user_email}"
+            if "API Model" in model_type and api_key:
+                return self._call_api_model(system_prompt, user_prompt, api_key, temperature)
+            else:
+                return self._call_ollama_model(system_prompt, user_prompt, model_type, temperature)
+        
+        except Exception as e:
+            print(f"❌ Erreur génération réponse: {e}")
+            return f"❌ Erreur lors de la génération de la réponse: {str(e)}"
+    
+    def _call_ollama_model(self, system_prompt: str, user_prompt: str, 
+                          model: str, temperature: float) -> str:
+        """Appelle un modèle Ollama local"""
+        try:
+            # URL Ollama par défaut
+            ollama_url = "http://localhost:11434/api/generate"
+            
+            payload = {
+                "model": model,
+                "prompt": f"{system_prompt}\n\n{user_prompt}",
+                "temperature": temperature,
+                "stream": False
+            }
+            
+            response = requests.post(ollama_url, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get('response', 'Réponse vide du modèle')
+            else:
+                return f"❌ Erreur Ollama ({response.status_code}): Assurez-vous qu'Ollama est démarré avec `ollama serve`"
+        
+        except requests.exceptions.ConnectionError:
+            return """❌ **Impossible de se connecter à Ollama**
+            
+            **Solutions:**
+            1. Installez Ollama: https://ollama.com/
+            2. Démarrez le service: `ollama serve`
+            3. Téléchargez le modèle: `ollama pull deepseek-r1:7b`
+            4. Ou utilisez un modèle API avec votre clé"""
+        
+        except Exception as e:
+            return f"❌ Erreur inattendue: {str(e)}"
+    
+    def _call_api_model(self, system_prompt: str, user_prompt: str, 
+                       api_key: str, temperature: float) -> str:
+        """Appelle un modèle via API"""
+        try:
+            full_prompt = f"{system_prompt}\n\n{user_prompt}"
+            return f"Réponse basée sur l'API : {full_prompt[:200]}..."
+        
+        except Exception as e:
+            return f"❌ Erreur API: {str(e)}"
+
+class EmailManager:
+    """Gestionnaire d'emails avec SMTP Relay (du code 2)"""
+    
+    def __init__(self):
+        self.smtp_server = SMTP_CONFIG['SMTP_SERVER']
+        self.smtp_port = SMTP_CONFIG['SMTP_PORT']
+        self.email = SMTP_CONFIG['FROM_EMAIL']
+        self.username = SMTP_CONFIG['SMTP_USERNAME']
+        self.password = SMTP_CONFIG['SMTP_PASSWORD']
+    
+    def send_email(self, to_email: str, subject: str, body: str, 
+                   is_html: bool = False, attachments: List[str] = None) -> tuple[bool, str]:
+        """Envoie un email avec pièces jointes optionnelles"""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Corps du message
+            if is_html:
+                msg.attach(MIMEText(body, 'html'))
+            else:
+                msg.attach(MIMEText(body, 'plain'))
+            
+            # Pièces jointes
+            if attachments:
+                for file_path in attachments:
+                    if os.path.exists(file_path):
+                        with open(file_path, "rb") as attachment:
+                            part = MIMEBase('application', 'octet-stream')
+                            part.set_payload(attachment.read())
+                        
+                        encoders.encode_base64(part)
+                        part.add_header(
+                            'Content-Disposition',
+                            f'attachment; filename= {os.path.basename(file_path)}'
+                        )
+                        msg.attach(part)
+            
+            # Envoi via SMTP Relay
+            context = ssl.create_default_context()
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls(context=context)
+                server.login(self.username, self.password)
+                server.send_message(msg)
+            
+            logging.info(f"Email envoyé avec succès à {to_email}")
+            return True, "Email envoyé avec succès"
+        
+        except Exception as e:
+            logging.error(f"Erreur lors de l'envoi d'email: {e}")
+            return False, f"Erreur: {str(e)}"
+    
+    def send_conversation_email(self, to_email: str, messages: List[Dict]) -> tuple[bool, str]:
+        """Envoie la conversation par email (du code 2)"""
+        subject = f"🚗 Conversation AUTOSAR RAG - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        
+        # Créer le contenu HTML
+        html_content = self._generate_conversation_html(messages)
+        
+        # Créer aussi une version texte
+        text_content = self._generate_conversation_text(messages)
+        
+        return self.send_email(to_email, subject, html_content, is_html=True)
+    
+    def send_source_code_email(self, to_email: str) -> tuple[bool, str]:
+        """Envoie le code source par email"""
+        subject = "🚗 Code Source AUTOSAR RAG Assistant"
+        
+        try:
+            # Lire le code source actuel
+            with open(__file__, 'r', encoding='utf-8') as f:
+                source_code = f.read()
             
             body = f"""
-AUTOSAR Security Alert
+Bonjour,
 
-User: {user_email}
-Attack Types: {', '.join(attack_info.get('attack_types', []))}
-Risk Level: {attack_info.get('risk_level', 'UNKNOWN')}
-Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Voici le code source complet de l'application AUTOSAR RAG Assistant.
 
-Details: {attack_info.get('details', '')[:200]}...
+Date de génération: {datetime.now().strftime('%d/%m/%Y à %H:%M')}
 
-Actions: User blocked automatically.
+Fonctionnalités incluses:
+- 🤖 Système RAG avec FAISS et sentence-transformers
+- 📄 Support multi-formats (PDF, DOCX, TXT, MD)
+- 🔍 Recherche hybride (vectorielle + mots-clés)
+- 📧 Envoi d'emails via SMTP Relay
+- 🚗 Base de connaissances AUTOSAR pré-construite
 
-AUTOSAR RAG Security System
+Code source:
+{'='*50}
+
+{source_code}
+
+{'='*50}
+
+Cordialement,
+L'équipe AUTOSAR RAG Assistant
             """
             
-            msg = MIMEText(body, 'plain', 'utf-8')
-            msg['From'] = f"AUTOSAR Security <{FROM_EMAIL}>"
-            msg['To'] = ', '.join(SECURITY_TEAM_EMAILS)
-            msg['Subject'] = subject
-            
-            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            server.quit()
-            
-            self.last_alert_time = current_time
-            print(f"✅ Alert sent to {len(SECURITY_TEAM_EMAILS)} recipients")
-            return True
+            return self.send_email(to_email, subject, body)
             
         except Exception as e:
-            print(f"❌ Alert error: {e}")
-            return False
-
-# ===== GESTIONNAIRE PRINCIPAL =====
-class AutosarSecureManager:
-    """Gestionnaire principal intégrant tous les systèmes"""
+            return False, f"Erreur lors de la lecture du code source: {str(e)}"
     
-    def __init__(self):
-        self.storage = InMemoryStorage()
-        self.encryption = CloudEncryption()
-        self.security = SmartSecurityFilter()
-        self.rag = CloudRAGSystem()
-        self.alerts = SimpleAlertSystem()
-        print("🔒 AUTOSAR Secure Manager initialized")
-    
-    def generate_verification_code(self):
-        return f"{secrets.randbelow(900000) + 100000:06d}"
-    
-    def generate_session_id(self):
-        return secrets.token_urlsafe(32)
-    
-    def send_verification_email(self, email: str, code: str) -> bool:
-        """Envoie email de vérification"""
-        try:
-            subject = "🔐 AUTOSAR RAG - Code de Vérification"
+    def _generate_conversation_html(self, messages: List[Dict]) -> str:
+        """Génère le HTML de la conversation"""
+        current_time = datetime.now().strftime("%d/%m/%Y à %H:%M")
+        
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .message {{ margin: 15px 0; padding: 10px; border-radius: 5px; }}
+                .user {{ background-color: #e3f2fd; }}
+                .assistant {{ background-color: #f1f8e9; }}
+                .timestamp {{ font-size: 0.8em; color: #666; }}
+                .header {{ background-color: #1976d2; color: white; padding: 15px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>🚗 Conversation AUTOSAR RAG Assistant</h2>
+                <p><strong>Généré le:</strong> {current_time}</p>
+            </div>
+        """
+        
+        for message in messages:
+            role_name = "👤 Vous" if message["role"] == "user" else "🤖 Assistant"
+            css_class = message["role"]
             
-            html_body = f"""
-            <html>
-            <body style="font-family: Arial; max-width: 600px; margin: 0 auto;">
-                <div style="background: linear-gradient(135deg, #007bff, #0056b3); color: white; padding: 30px; text-align: center;">
-                    <h1>🔐 AUTOSAR Secure RAG</h1>
-                    <p>Assistant IA Sécurisé pour l'Automobile</p>
-                </div>
-                
-                <div style="padding: 30px; background: white; border: 1px solid #e3f2fd;">
-                    <h2 style="color: #007bff;">Code de Vérification Sécurisé</h2>
-                    
-                    <div style="background: #f8f9fa; border: 2px solid #007bff; padding: 20px; text-align: center; margin: 20px 0;">
-                        <div style="font-size: 32px; font-weight: bold; color: #007bff; letter-spacing: 5px; font-family: monospace;">
-                            {code}
-                        </div>
-                    </div>
-                    
-                    <p>Entrez ce code pour accéder à l'assistant AUTOSAR sécurisé avec base de connaissances technique complète.</p>
-                    
-                    <div style="background: #d1edff; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h3>🛡️ Sécurité Renforcée :</h3>
-                        <ul>
-                            <li>🔐 Chiffrement end-to-end des messages</li>
-                            <li>🛡️ Protection XSS/SQL intelligente</li>
-                            <li>🚫 Blocage automatique après 3 attaques</li>
-                            <li>🧠 Base de connaissances AUTOSAR complète</li>
-                            <li>📧 Alertes sécurité équipe technique</li>
-                        </ul>
-                    </div>
-                    
-                    <div style="background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h3>🚗 Fonctionnalités RAG AUTOSAR :</h3>
-                        <ul>
-                            <li>Architecture (RTE, BSW, SWC)</li>
-                            <li>Communication (CAN, LIN, FlexRay, Ethernet)</li>
-                            <li>Sécurité (HSM, SecOC, ISO 26262)</li>
-                            <li>Standards RFC (TCP/IP, HTTP, WebSocket)</li>
-                            <li>Développement (ARXML, Model-Based)</li>
-                            <li>Diagnostics (UDS, DCM, DEM, OBD)</li>
-                        </ul>
-                    </div>
-                    
-                    <p><small>⏰ Code expire dans {VERIFICATION_CODE_EXPIRY_MINUTES} minutes.</small></p>
-                </div>
-                
-                <div style="background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px;">
-                    AUTOSAR Secure RAG API v5.0 - Cloud Optimized<br>
-                    Chiffrement AES-256 | Protection Multi-Couches | Assistant IA Technique
-                </div>
+            # Remplacer les retours à la ligne par des <br>
+            content_with_br = message["content"].replace('\n', '<br>')
+            
+            html += f"""
+            <div class="message {css_class}">
+                <strong>{role_name}:</strong><br>
+                {content_with_br}
+                <div class="timestamp">{message.get('timestamp', datetime.now())}</div>
+            </div>
+            """
+        
+        html += """
+            <hr>
+            <p><em>Email généré automatiquement par AUTOSAR RAG Assistant</em></p>
             </body>
-            </html>
-            """
-            
-            msg = MIMEMultipart('alternative')
-            msg['From'] = f"AUTOSAR Secure <{FROM_EMAIL}>"
-            msg['To'] = email
-            msg['Subject'] = subject
-            
-            html_part = MIMEText(html_body, 'html', 'utf-8')
-            msg.attach(html_part)
-            
-            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            server.quit()
-            
-            print(f"✅ Verification email sent to: {email}")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Email error: {e}")
-            return False
+        </html>
+        """
+        
+        return html
     
-    def request_verification(self, email: str, extension_id: str) -> Dict:
-        """Demande de code de vérification"""
-        try:
-            # Nettoyer données expirées
-            self.storage.clean_expired_data()
-            
-            # Vérifier si utilisateur bloqué
-            if email in self.storage.blocked_users:
-                return {"success": False, "message": "Utilisateur bloqué pour activité malveillante"}
-            
-            # Générer code
-            code = self.generate_verification_code()
-            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_EXPIRY_MINUTES)).isoformat()
-            
-            # Stocker code
-            self.storage.verification_codes[email] = {
-                'code': code,
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'expires_at': expires_at,
-                'extension_id': extension_id
-            }
-            
-            # Envoyer email
-            email_sent = self.send_verification_email(email, code)
-            
-            if email_sent:
-                return {
-                    "success": True,
-                    "message": f"Code de vérification envoyé à {email}",
-                    "expires_in_minutes": VERIFICATION_CODE_EXPIRY_MINUTES,
-                    "security_features": [
-                        "Chiffrement AES-256",
-                        "Protection XSS/SQL",
-                        "RAG AUTOSAR intégré"
-                    ]
-                }
-            else:
-                return {"success": False, "message": "Erreur envoi email"}
-                
-        except Exception as e:
-            print(f"❌ Request verification error: {e}")
-            return {"success": False, "message": "Erreur serveur"}
-    
-    def verify_code(self, email: str, code: str, extension_id: str) -> Dict:
-        """Vérification du code et création de session"""
-        try:
-            # Nettoyer données expirées
-            self.storage.clean_expired_data()
-            
-            # Vérifier si utilisateur bloqué
-            if email in self.storage.blocked_users:
-                return {"success": False, "message": "Utilisateur bloqué"}
-            
-            # Vérifier code
-            if email not in self.storage.verification_codes:
-                return {"success": False, "message": "Code invalide ou expiré"}
-            
-            code_data = self.storage.verification_codes[email]
-            
-            if code_data['code'] != code:
-                return {"success": False, "message": "Code incorrect"}
-            
-            # Vérifier expiration
-            expires_at = datetime.fromisoformat(code_data['expires_at'].replace('Z', '+00:00'))
-            if datetime.now(timezone.utc) > expires_at:
-                return {"success": False, "message": "Code expiré"}
-            
-            # Créer session
-            session_id = self.generate_session_id()
-            session_expires = (datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)).isoformat()
-            
-            self.storage.sessions[session_id] = {
-                'email': email,
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'expires_at': session_expires,
-                'extension_id': extension_id,
-                'last_activity': datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Supprimer code utilisé
-            del self.storage.verification_codes[email]
-            
-            print(f"✅ Session created for {email}: {session_id[:16]}...")
-            
-            return {
-                "success": True,
-                "session_id": session_id,
-                "expires_at": session_expires,
-                "security_enabled": True,
-                "rag_enabled": True,
-                "features": {
-                    "encryption": "AES-256",
-                    "xss_protection": "Smart filtering",
-                    "rag_chunks": len(self.rag.chunks),
-                    "knowledge_categories": list(self.rag.knowledge_base.keys())
-                }
-            }
-            
-        except Exception as e:
-            print(f"❌ Verify code error: {e}")
-            return {"success": False, "message": "Erreur serveur"}
-    
-    def validate_session(self, session_id: str) -> Dict:
-        """Validation de session"""
-        try:
-            if session_id not in self.storage.sessions:
-                return {"valid": False, "message": "Session non trouvée"}
-            
-            session = self.storage.sessions[session_id]
-            
-            # Vérifier expiration
-            expires_at = datetime.fromisoformat(session['expires_at'].replace('Z', '+00:00'))
-            if datetime.now(timezone.utc) > expires_at:
-                del self.storage.sessions[session_id]
-                return {"valid": False, "message": "Session expirée"}
-            
-            # Vérifier si utilisateur bloqué
-            if session['email'] in self.storage.blocked_users:
-                return {"valid": False, "message": "Utilisateur bloqué"}
-            
-            # Mettre à jour activité
-            session['last_activity'] = datetime.now(timezone.utc).isoformat()
-            
-            return {
-                "valid": True,
-                "email": session['email'],
-                "expires_at": session['expires_at'],
-                "security_enabled": True
-            }
-            
-        except Exception as e:
-            print(f"❌ Validate session error: {e}")
-            return {"valid": False, "message": "Erreur serveur"}
-    
-    def process_secure_message(self, session_id: str, message: str, encrypted: bool = False) -> Dict:
-        """Traite un message sécurisé avec RAG"""
-        try:
-            # Valider session
-            validation = self.validate_session(session_id)
-            if not validation["valid"]:
-                return {"success": False, "message": "Session invalide"}
-            
-            user_email = validation["email"]
-            
-            # Déchiffrer si nécessaire
-            if encrypted:
-                message = self.encryption.decrypt_message(message)
-            
-            print(f"🔍 Processing message from {user_email}: '{message[:50]}...'")
-            
-            # Vérification sécurité
-            security_check = self.security.analyze_security_threats(message)
-            
-            if not security_check['is_safe']:
-                print(f"🚨 ATTACK from {user_email}: {security_check['threats']}")
-                
-                # Enregistrer attaque
-                if user_email not in self.storage.attacks:
-                    self.storage.attacks[user_email] = []
-                
-                self.storage.attacks[user_email].append({
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                    'threats': security_check['threats'],
-                    'risk_level': security_check['risk_level'],
-                    'message': message[:100]
-                })
-                
-                # Bloquer après 3 attaques
-                if len(self.storage.attacks[user_email]) >= MAX_ATTACKS_BEFORE_BLOCK:
-                    self.storage.blocked_users.add(user_email)
-                    
-                    # Envoyer alerte
-                    self.alerts.send_attack_alert(user_email, {
-                        'attack_types': ['XSS/SQL'],
-                        'risk_level': security_check['risk_level'],
-                        'details': message
-                    })
-                    
-                    return {
-                        "success": False,
-                        "user_blocked": True,
-                        "message": f"🚫 Utilisateur {user_email} bloqué après {MAX_ATTACKS_BEFORE_BLOCK} attaques. Équipe sécurité alertée."
-                    }
-                
-                return {
-                    "success": False,
-                    "attack_detected": True,
-                    "attack_count": len(self.storage.attacks[user_email]),
-                    "message": f"🚨 Attaque détectée ({len(self.storage.attacks[user_email])}/{MAX_ATTACKS_BEFORE_BLOCK}). Message bloqué."
-                }
-            
-            # Traitement RAG normal
-            chunks = self.rag.search_chunks(message, top_k=3)
-            answer = self.rag.generate_answer(message, chunks)
-            
-            # Chiffrer réponse si demandé
-            encrypted_answer = self.encryption.encrypt_message(answer) if encrypted else None
-            
-            print(f"✅ RAG response generated for {user_email}")
-            
-            return {
-                "success": True,
-                "answer": answer,
-                "encrypted_answer": encrypted_answer,
-                "sources": [
-                    {
-                        "source": chunk['source'],
-                        "category": chunk['category'],
-                        "keywords": chunk['keywords']
-                    } for chunk in chunks
-                ],
-                "security_info": {
-                    "threats_detected": 0,
-                    "technical_context": security_check['is_technical_context'],
-                    "risk_level": "LOW"
-                },
-                "rag_stats": {
-                    "chunks_found": len(chunks),
-                    "total_chunks": len(self.rag.chunks),
-                    "search_time": "< 1s"
-                }
-            }
-            
-        except Exception as e:
-            print(f"❌ Process message error: {e}")
-            return {"success": False, "message": "Erreur serveur"}
+    def _generate_conversation_text(self, messages: List[Dict]) -> str:
+        """Génère la version texte de la conversation"""
+        text = f"🚗 Conversation AUTOSAR RAG Assistant\n"
+        text += f"Généré le: {datetime.now().strftime('%d/%m/%Y à %H:%M')}\n"
+        text += "="*50 + "\n\n"
+        
+        for message in messages:
+            role = "Vous" if message["role"] == "user" else "Assistant"
+            text += f"{role}: {message['content']}\n\n"
+        
+        text += "="*50 + "\n"
+        text += "Email généré automatiquement par AUTOSAR RAG Assistant"
+        
+        return text
 
-# ===== INITIALISATION =====
-print("🔐 Initializing AUTOSAR Secure Manager...")
-manager = AutosarSecureManager()
-print("✅ All systems initialized")
-
-# ===== ROUTES API =====
-
-@app.route('/', methods=['GET'])
-def root():
-    return jsonify({
-        "message": "AUTOSAR SECURE RAG API - VERSION FINALE OPTIMISÉE CLOUD",
-        "version": "5.0.0-cloud-optimized",
-        "status": "online",
-        "features": [
-            "🔐 Chiffrement end-to-end AES-256",
-            "🛡️ Protection XSS/SQL intelligente", 
-            "🚨 Détection d'attaques temps réel",
-            "🚫 Blocage automatique (3 attaques)",
-            "📧 Alertes sécurité équipe",
-            "🧠 RAG AUTOSAR intégré",
-            "☁️ Optimisé cloud (sans DB complexes)",
-            "⚡ Déploiement ultra-rapide"
-        ],
-        "security_stats": {
-            "blocked_users": len(manager.storage.blocked_users),
-            "active_sessions": len(manager.storage.sessions),
-            "max_attacks": MAX_ATTACKS_BEFORE_BLOCK
-        },
-        "rag_stats": {
-            "chunks_available": len(manager.rag.chunks),
-            "categories": list(manager.rag.knowledge_base.keys())
-        },
-        "endpoints": [
-            "GET /health - Santé du système",
-            "POST /auth/request-verification - Demander code",
-            "POST /auth/verify-code - Vérifier code",
-            "POST /auth/validate-session - Valider session",
-            "POST /chat/secure-message - Chat sécurisé",
-            "POST /security/encrypt - Chiffrer message",
-            "POST /security/decrypt - Déchiffrer message",
-            "GET /admin/stats - Statistiques admin"
-        ]
-    })
-
-@app.route('/health', methods=['GET'])
-def health():
-    manager.storage.clean_expired_data()
+def init_session_state():
+    """Initialise les variables de session"""
+    # RAG System
+    if 'rag' not in st.session_state:
+        with st.spinner("🔄 Initialisation du système RAG AUTOSAR..."):
+            st.session_state.rag = RAGRetriever()
     
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "5.0.0-cloud-optimized",
-        "storage": {
-            "type": "in-memory (cloud-friendly)",
-            "users": len(manager.storage.users),
-            "active_sessions": len(manager.storage.sessions),
-            "verification_codes": len(manager.storage.verification_codes),
-            "blocked_users": len(manager.storage.blocked_users)
-        },
-        "security": {
-            "encryption": "AES-256 active",
-            "filtering": "XSS/SQL intelligent",
-            "max_attacks": MAX_ATTACKS_BEFORE_BLOCK,
-            "alert_recipients": len(SECURITY_TEAM_EMAILS)
-        },
-        "rag_system": {
-            "status": "active",
-            "chunks": len(manager.rag.chunks),
-            "categories": len(manager.rag.knowledge_base)
+    # Email Manager
+    if 'email_manager' not in st.session_state:
+        st.session_state.email_manager = EmailManager()
+    
+    # Messages et conversations
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+
+def main():
+    """Application principale simplifiée avec RAG et emails"""
+    
+    # CSS personnalisé
+    st.markdown("""
+    <style>
+        .main { padding-top: 0rem; }
+        .email-box { 
+            background-color: #f0f2f6; 
+            padding: 15px; 
+            border-radius: 10px; 
+            border-left: 4px solid #1976d2; 
+            margin: 10px 0;
         }
-    })
+        .success-box { 
+            background-color: #e8f5e8; 
+            padding: 15px; 
+            border-radius: 10px; 
+            border-left: 4px solid #4caf50; 
+            margin: 10px 0;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Initialisation
+    init_session_state()
+    
+    # Header principal
+    st.title("🚗 AUTOSAR RAG Assistant")
+    st.markdown("### 🤖 Assistant intelligent pour AUTOSAR et standards RFC")
+    
+    # Sidebar avec paramètres
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        
+        selected_model = st.selectbox(
+            "🤖 Choisir le modèle",
+            ["deepseek-r1:7b", "llama3.1:latest", "API Model (Gemini)"],
+            index=0,
+            help="Sélectionnez le modèle pour générer les réponses"
+        )
+        
+        api_key = None
+        if "API Model" in selected_model:
+            api_key = st.text_input("🔑 Clé API", type="password")
+        
+        temperature = st.slider("🌡️ Température", 0.0, 1.0, 0.3, help="Contrôle la créativité des réponses")
+        
+        st.divider()
+        
+        # Statistiques RAG
+        st.header("📊 Statistiques RAG")
+        if hasattr(st.session_state, 'rag') and st.session_state.rag.chunks:
+            stats = {
+                'total_chunks': len(st.session_state.rag.chunks),
+                'total_documents': len(set(chunk.metadata['source'] for chunk in st.session_state.rag.chunks)),
+                'embedding_model': 'all-MiniLM-L6-v2'
+            }
+            st.metric("📚 Documents", stats['total_documents'])
+            st.metric("🧩 Chunks", stats['total_chunks'])
+            st.caption(f"🧠 Modèle: {stats['embedding_model']}")
+        
+        st.divider()
+        
+        # Section Email (du code 2)
+        st.header("📧 Fonctions Email")
+        
+        # Zone email mise en évidence
+        st.markdown('<div class="email-box">', unsafe_allow_html=True)
+        st.subheader("✉️ Envoyer par Email")
+        
+        email_recipient = st.text_input(
+            "📮 Adresse email destinataire",
+            placeholder="votre.email@example.com",
+            help="Tapez l'email et appuyez sur les boutons ci-dessous"
+        )
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📧 Envoyer Conversation", type="primary"):
+                if email_recipient and st.session_state.messages:
+                    with st.spinner("📤 Envoi de la conversation..."):
+                        success, message = st.session_state.email_manager.send_conversation_email(
+                            email_recipient, st.session_state.messages
+                        )
+                        
+                        if success:
+                            st.markdown('<div class="success-box">✅ <strong>Conversation envoyée avec succès!</strong></div>', unsafe_allow_html=True)
+                        else:
+                            st.error(f"❌ Erreur: {message}")
+                elif not email_recipient:
+                    st.error("❌ Veuillez saisir une adresse email")
+                else:
+                    st.error("❌ Aucune conversation à envoyer")
+        
+        with col2:
+            if st.button("💻 Envoyer Code Source", type="secondary"):
+                if email_recipient:
+                    with st.spinner("📤 Envoi du code source..."):
+                        success, message = st.session_state.email_manager.send_source_code_email(email_recipient)
+                        
+                        if success:
+                            st.markdown('<div class="success-box">✅ <strong>Code source envoyé!</strong></div>', unsafe_allow_html=True)
+                        else:
+                            st.error(f"❌ Erreur: {message}")
+                else:
+                    st.error("❌ Veuillez saisir une adresse email")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Upload de documents
+        st.header("📁 Ajouter Documents")
+        uploaded_file = st.file_uploader(
+            "📤 Ajouter un document AUTOSAR",
+            type=['txt', 'pdf', 'docx', 'md'],
+            help="Ajoutez vos propres documents AUTOSAR"
+        )
+        
+        if uploaded_file:
+            if st.button("✅ Ajouter au RAG"):
+                with st.spinner("Traitement du document..."):
+                    try:
+                        # Sauvegarder le fichier
+                        file_path = st.session_state.rag.documents_path / uploaded_file.name
+                        with open(file_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        
+                        # Reconstruire la base
+                        st.session_state.rag._build_vector_database()
+                        st.success(f"✅ Document {uploaded_file.name} ajouté!")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erreur: {e}")
+    
+    # Interface de chat principale
+    st.subheader("💬 Chat AUTOSAR avec RAG")
+    
+    # Affichage des messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                st.caption("🔍 Réponse basée sur la base de connaissances AUTOSAR")
+    
+    # Input utilisateur
+    if prompt := st.chat_input("💭 Posez votre question sur AUTOSAR ou les RFC..."):
+        
+        # Ajouter le message utilisateur avec timestamp
+        user_message = {
+            "role": "user", 
+            "content": prompt,
+            "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        }
+        st.session_state.messages.append(user_message)
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Générer la réponse avec RAG
+        with st.chat_message("assistant"):
+            with st.spinner("🔍 Recherche dans la base AUTOSAR..."):
+                
+                # Recherche RAG
+                start_time = time.time()
+                chunks = st.session_state.rag.hybrid_search(prompt, top_k=5)
+                search_time = time.time() - start_time
+                
+                st.caption(f"🔍 {len(chunks)} chunks trouvés en {search_time:.2f}s")
+                
+                # Génération de la réponse
+                with st.spinner("🤖 Génération de la réponse..."):
+                    answer = st.session_state.rag.generate_answer(
+                        prompt,
+                        chunks,
+                        model_type=selected_model,
+                        api_key=api_key,
+                        temperature=temperature
+                    )
+                
+                # Affichage de la réponse
+                st.markdown(answer)
+                st.caption("🔍 Réponse basée sur la base de connaissances AUTOSAR")
+                
+                # Sources utilisées
+                if chunks:
+                    with st.expander("📚 Sources consultées"):
+                        for i, chunk in enumerate(chunks, 1):
+                            st.write(f"**{i}. {chunk.metadata['source']}** ({chunk.metadata['word_count']} mots)")
+                            with st.expander(f"Extrait {i}"):
+                                st.text(chunk.content[:300] + "..." if len(chunk.content) > 300 else chunk.content)
+                
+                # Ajouter à l'historique avec timestamp
+                assistant_message = {
+                    "role": "assistant", 
+                    "content": answer,
+                    "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                }
+                st.session_state.messages.append(assistant_message)
+    
+    # Footer avec informations
+    st.markdown("---")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🤖 Système", "RAG Actif")
+    
+    with col2:
+        if hasattr(st.session_state, 'rag') and st.session_state.rag.chunks:
+            st.metric("📚 Base", f"{len(st.session_state.rag.chunks)} chunks")
+        else:
+            st.metric("📚 Base", "Chargement...")
+    
+    with col3:
+        st.metric("📧 Email", "SMTP Relay")
+    
+    with col4:
+        st.metric("🚗 Focus", "AUTOSAR + RFC")
 
-@app.route('/auth/request-verification', methods=['POST'])
-def request_verification():
-    data = request.get_json()
-    email = data.get('email')
-    extension_id = data.get('extension_id', 'web')
-    
-    if not email:
-        return jsonify({"success": False, "message": "Email requis"}), 400
-    
-    result = manager.request_verification(email, extension_id)
-    return jsonify(result)
-
-@app.route('/auth/verify-code', methods=['POST'])
-def verify_code():
-    data = request.get_json()
-    email = data.get('email')
-    code = data.get('code')
-    extension_id = data.get('extension_id', 'web')
-    
-    if not all([email, code]):
-        return jsonify({"success": False, "message": "Email et code requis"}), 400
-    
-    result = manager.verify_code(email, code, extension_id)
-    return jsonify(result)
-
-@app.route('/auth/validate-session', methods=['POST'])
-def validate_session():
-    data = request.get_json()
-    session_id = data.get('session_id')
-    
-    if not session_id:
-        return jsonify({"valid": False, "message": "Session ID requis"}), 400
-    
-    result = manager.validate_session(session_id)
-    return jsonify(result)
-
-@app.route('/chat/secure-message', methods=['POST'])
-def secure_message():
-    data = request.get_json()
-    session_id = data.get('session_id')
-    message = data.get('message')
-    encrypted_message = data.get('encrypted_message')
-    
-    if not session_id:
-        return jsonify({"success": False, "message": "Session ID requis"}), 400
-    
-    if not message and not encrypted_message:
-        return jsonify({"success": False, "message": "Message requis"}), 400
-    
-    # Utiliser message chiffré ou normal
-    final_message = encrypted_message if encrypted_message else message
-    is_encrypted = bool(encrypted_message)
-    
-    result = manager.process_secure_message(session_id, final_message, is_encrypted)
-    return jsonify(result)
-
-@app.route('/security/encrypt', methods=['POST'])
-def encrypt_endpoint():
-    data = request.get_json()
-    message = data.get('message')
-    
-    if not message:
-        return jsonify({"success": False, "message": "Message requis"}), 400
-    
-    try:
-        encrypted = manager.encryption.encrypt_message(message)
-        return jsonify({
-            "success": True,
-            "encrypted_message": encrypted,
-            "original_length": len(message),
-            "encrypted_length": len(encrypted)
-        })
-    except Exception as e:
-        return jsonify({"success": False, "message": "Erreur chiffrement"}), 500
-
-@app.route('/security/decrypt', methods=['POST'])
-def decrypt_endpoint():
-    data = request.get_json()
-    encrypted_message = data.get('encrypted_message')
-    
-    if not encrypted_message:
-        return jsonify({"success": False, "message": "Message chiffré requis"}), 400
-    
-    try:
-        decrypted = manager.encryption.decrypt_message(encrypted_message)
-        return jsonify({
-            "success": True,
-            "decrypted_message": decrypted,
-            "encrypted_length": len(encrypted_message),
-            "decrypted_length": len(decrypted)
-        })
-    except Exception as e:
-        return jsonify({"success": False, "message": "Erreur déchiffrement"}), 500
-
-@app.route('/admin/stats', methods=['GET'])
-def admin_stats():
-    manager.storage.clean_expired_data()
-    
-    return jsonify({
-        "system": {
-            "status": "operational",
-            "version": "5.0.0-cloud-optimized",
-            "uptime": "available",
-            "storage_type": "in-memory (cloud-friendly)"
-        },
-        "users": {
-            "total_users": len(manager.storage.users),
-            "active_sessions": len(manager.storage.sessions),
-            "blocked_users": len(manager.storage.blocked_users),
-            "pending_verifications": len(manager.storage.verification_codes)
-        },
-        "security": {
-            "total_attacks": sum(len(attacks) for attacks in manager.storage.attacks.values()),
-            "blocked_users_list": list(manager.storage.blocked_users),
-            "max_attacks_threshold": MAX_ATTACKS_BEFORE_BLOCK,
-            "alert_system": "active"
-        },
-        "rag_system": {
-            "chunks_available": len(manager.rag.chunks),
-            "knowledge_categories": list(manager.rag.knowledge_base.keys()),
-            "search_algorithm": "keyword-based scoring"
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
-
-# ===== GESTION DES ERREURS =====
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Endpoint non trouvé"}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Erreur serveur interne"}), 500
-
-# ===== LANCEMENT =====
-if __name__ == '__main__':
-    print(f"🚀 AUTOSAR Secure RAG API v5.0.0 - Cloud Optimized")
-    print(f"🔐 Chiffrement AES-256 : ✅")
-    print(f"🛡️ Protection XSS/SQL : ✅")
-    print(f"🧠 RAG AUTOSAR : {len(manager.rag.chunks)} chunks")
-    print(f"📧 Alertes équipe : {len(SECURITY_TEAM_EMAILS)} destinataires")
-    print(f"☁️ Optimisé cloud : ✅ (sans DB complexes)")
-    print(f"🚫 Blocage : Max {MAX_ATTACKS_BEFORE_BLOCK} attaques")
-    print(f"⚡ Prêt pour déploiement instantané !")
-    
-    if os.getenv('RENDER'):
-        print("🌍 Mode RENDER Production")
-    
-    app.run(
-        host='0.0.0.0',
-        port=PORT,
-        debug=DEBUG_MODE,
-        threaded=True
-    )
+if __name__ == "__main__":
+    main()

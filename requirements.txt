@@ -1,33 +1,32 @@
-# AUTOSAR Secure RAG API - Requirements optimisé pour le cloud
-# Compatible Python 3.8+ et déploiement sur Render/Heroku/Vercel
-
-# Framework Web
 Flask==2.3.3
 Flask-CORS==4.0.0
-
-# Base de données (optionnel - remplacé par système en mémoire)
-# supabase==1.2.0
-
-# Sécurité et chiffrement - version flexible
 cryptography>=40.0.0
-
-# Utilitaires essentiels
 requests==2.31.0
 python-dotenv==1.0.0
-
-# Serveur de production
 gunicorn==21.2.0
 
-# Utilitaires pour le parsing (légers)
-# Pas de PyPDF2 ou python-docx pour réduire la taille
+# Streamlit et interface
+streamlit>=1.28.0
 
-# ❌ SUPPRIMÉ - Trop lourd pour le cloud :
-# torch>=2.0.0
-# sentence-transformers
-# faiss-cpu
-# numpy (uniquement si utilisé par d'autres libs)
-# PyPDF2
-# python-docx
+# Traitement de texte et documents
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+python-dotenv>=1.0.0
 
-# ✅ GARDÉ - Léger et essentiel :
-# Flask, requests, cryptography, gunicorn, python-dotenv
+# Machine Learning et RAG
+torch>=2.0.0
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4
+numpy>=1.24.0
+
+# Requests pour API calls
+requests>=2.31.0
+
+# Base de données et sécurité (sans bcrypt)
+# Note: On utilise hashlib qui est inclus dans Python standard library
+
+# Email et SMTP
+# Note: smtplib et email.mime sont inclus dans Python standard library
+
+# Outils système
+pathlib2>=2.3.7  # Si nécessaire pour compatibilité
