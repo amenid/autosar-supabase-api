@@ -34,9 +34,9 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 # Configuration Email BREVO (✅ CORRIGÉE)
 SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp-relay.brevo.com')  # ✅ Brevo
 SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
-SMTP_USERNAME = os.getenv('SMTP_USERNAME', '8a993d003@smtp-brevo.com')
-SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'hX2nbHa5DcUPWOzt')
-FROM_EMAIL = os.getenv('FROM_EMAIL', 'aydiameni@sfax.r-iset.tn')
+SMTP_USERNAME = os.getenv('SMTP_USERNAME', '7d7544008@smtp-brevo.com')
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'JMjV80bfWNQhrPCK')
+FROM_EMAIL = os.getenv('FROM_EMAIL', 'ameniaydiii@gmail.com')
 
 # Configuration des règles de sécurité
 MAX_ERRORS_BEFORE_BLOCK = 3
