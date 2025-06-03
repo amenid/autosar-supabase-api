@@ -17,6 +17,8 @@ import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, Client
+from datetime import datetime, timedelta, timezone
+
 
 # ===== CONFIGURATION =====
 app = Flask(__name__)
@@ -221,8 +223,67 @@ class SessionManager:
         """Génère un ID de session sécurisé"""
         return secrets.token_urlsafe(32)
     
-    def request_verification(self, email, extension_id, user_agent=None):
-        """Demande un code de vérification pour un email"""
+def request_verification(self, email, extension_id, user_agent=None):
+    """Demande un code de vérification pour un email - VERSION CORRIGÉE"""
+    try:
+        if not self.db.is_connected():
+            return {"success": False, "message": "Database not available"}
+        
+        # Vérifier si l'utilisateur existe, sinon le créer
+        user_result = self.db.supabase.table('users').select("*").eq('email', email).execute()
+        
+        if not user_result.data:
+            # Créer nouvel utilisateur
+            user_data = {
+                "email": email,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "total_errors": 0,
+                "last_activity": datetime.now(timezone.utc).isoformat(),
+                "extension_id": extension_id,
+                "user_agent": user_agent or "Unknown"
+            }
+            
+            self.db.supabase.table('users').insert(user_data).execute()
+            print(f"👤 New user created: {email}")
+        else:
+            # Mettre à jour la dernière activité
+            self.db.supabase.table('users').update({
+                "last_activity": datetime.now(timezone.utc).isoformat()
+            }).eq('email', email).execute()
+        
+        # Générer le code de vérification
+        verification_code = self.generate_verification_code()
+        
+        # Supprimer les anciens codes pour cet email
+        self.db.supabase.table('verification_codes').delete().eq('email', email).execute()
+        
+        # Insérer le nouveau code
+        code_data = {
+            "email": email,
+            "code": verification_code,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_EXPIRY_MINUTES)).isoformat(),
+            "used": False,
+            "extension_id": extension_id
+        }
+        
+        self.db.supabase.table('verification_codes').insert(code_data).execute()
+        
+        # Envoyer l'email
+        email_sent = self.email.send_verification_code(email, verification_code)
+        
+        if email_sent:
+            return {
+                "success": True, 
+                "message": f"Code de vérification envoyé à {email}",
+                "expires_in_minutes": VERIFICATION_CODE_EXPIRY_MINUTES
+            }
+        else:
+            return {"success": False, "message": "Échec envoi email de vérification"}
+        
+    except Exception as e:
+        print(f"❌ Error in request_verification: {e}")
+        return {"success": False, "message": "Erreur serveur interne"}        """Demande un code de vérification pour un email"""
         try:
             if not self.db.is_connected():
                 return {"success": False, "message": "Database not available"}
@@ -588,7 +649,99 @@ def request_verification():
         return jsonify({"success": False, "message": "Erreur serveur interne"}), 500
 
 @app.route('/auth/verify-code', methods=['POST'])
-def verify_code():
+def verify_code(self, email, code, extension_id, browser_info=None):
+    """Vérifie un code et crée une session - VERSION CORRIGÉE TIMEZONE"""
+    try:
+        if not self.db.is_connected():
+            return {"success": False, "message": "Database not available"}
+        
+        # Chercher le code de vérification
+        verification_result = self.db.supabase.table('verification_codes').select("*").eq('email', email).eq('code', code).eq('used', False).execute()
+        
+        if not verification_result.data:
+            return {"success": False, "message": "Code invalide ou expiré"}
+        
+        verification = verification_result.data[0]
+        
+        # 🔧 CORRECTION TIMEZONE - Utiliser datetime avec UTC
+        try:
+            expires_at_str = verification['expires_at']
+            if expires_at_str.endswith('Z'):
+                expires_at_str = expires_at_str.replace('Z', '+00:00')
+            
+            expires_at = datetime.fromisoformat(expires_at_str)
+            
+            # Assurer que les deux datetimes ont le même timezone (UTC)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            now_utc = datetime.now(timezone.utc)
+            
+            if expires_at < now_utc:
+                return {"success": False, "message": "Code expiré"}
+                
+        except Exception as e:
+            print(f"⚠️ Timezone conversion error: {e}")
+            # Fallback: utiliser datetime naive
+            expires_at = datetime.fromisoformat(verification['expires_at'].replace('Z', ''))
+            if expires_at < datetime.now():
+                return {"success": False, "message": "Code expiré"}
+        
+        # Marquer le code comme utilisé
+        self.db.supabase.table('verification_codes').update({
+            "used": True,
+            "used_at": datetime.now(timezone.utc).isoformat()
+        }).eq('id', verification['id']).execute()
+        
+        # Récupérer les infos utilisateur
+        user_result = self.db.supabase.table('users').select("*").eq('email', email).execute()
+        if not user_result.data:
+            return {"success": False, "message": "Utilisateur non trouvé"}
+        
+        user = user_result.data[0]
+        
+        # Vérifier si l'utilisateur est bloqué
+        blocked_sessions = self.db.supabase.table('sessions').select("*").eq('email', email).eq('is_blocked', True).execute()
+        
+        if blocked_sessions.data:
+            return {
+                "success": False, 
+                "message": "Utilisateur bloqué pour erreurs excessives",
+                "is_blocked": True,
+                "error_count": user.get("total_errors", 0)
+            }
+        
+        # Générer une nouvelle session
+        session_id = self.generate_session_id()
+        
+        session_data = {
+            "session_id": session_id,
+            "email": email,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)).isoformat(),
+            "last_activity": datetime.now(timezone.utc).isoformat(),
+            "error_count": 0,
+            "is_blocked": False,
+            "extension_id": extension_id,
+            "browser_info": json.dumps(browser_info or {}),
+            "ip_address": request.remote_addr if request else None
+        }
+        
+        self.db.supabase.table('sessions').insert(session_data).execute()
+        
+        print(f"✅ Session created for {email}: {session_id[:16]}...")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "expires_at": session_data["expires_at"],
+            "error_count": user.get("total_errors", 0),
+            "is_blocked": False
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in verify_code: {e}")
+        return {"success": False, "message": "Erreur serveur interne"}
     """Vérifie un code et crée une session"""
     try:
         data = request.get_json()
