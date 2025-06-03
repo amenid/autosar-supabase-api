@@ -55,6 +55,9 @@ MAX_ATTACKS_BEFORE_BLOCK = 3  # 3 attaques = blocage
 SESSION_DURATION_HOURS = 24
 VERIFICATION_CODE_EXPIRY_MINUTES = 10
 
+# Configuration des règles de sécurité (compatibilité)
+MAX_ERRORS_BEFORE_BLOCK = 3
+
 # Email équipe sécurité
 SECURITY_TEAM_EMAILS = ['rahmafiras01@gmail.com', 'm24129370@gmail.com']
 
@@ -413,7 +416,7 @@ class AttackManager:
                 "user_email": user_email,
                 "session_id": session_id,
                 "attack_time": current_time.isoformat(),
-                "attack_types": json.dumps(attack_info.get('attack_types', [])),
+                "attack_types": json.dumps(attack_info.get('attack_types', [])),  # JSON en texte pour compatibilité
                 "attack_details": attack_info.get('attack_details', ''),
                 "risk_level": attack_info.get('risk_level', 'MEDIUM'),
                 "user_ip": attack_info.get('user_ip'),
@@ -900,6 +903,7 @@ class SupabaseManager:
     
     def _test_connection(self):
         try:
+            # Test simple compatible avec version 1.2.0
             result = self.supabase.table('users').select("id").limit(1).execute()
             print("✅ Supabase connection test passed")
             return True
@@ -910,12 +914,12 @@ class SupabaseManager:
     def _ensure_security_tables(self):
         """S'assure que les tables de sécurité existent (note: en prod, créer via Supabase Dashboard)"""
         # Note: En production, créer ces tables via le dashboard Supabase
-        # CREATE TABLE security_attacks (
+        # CREATE TABLE IF NOT EXISTS security_attacks (
         #   id SERIAL PRIMARY KEY,
         #   user_email TEXT,
         #   session_id TEXT,
         #   attack_time TIMESTAMP,
-        #   attack_types JSONB,
+        #   attack_types TEXT, -- JSON en texte pour compatibilité
         #   attack_details TEXT,
         #   risk_level TEXT,
         #   user_ip TEXT,
@@ -936,11 +940,12 @@ class SupabaseManager:
             }
         
         try:
-            sessions_result = self.supabase.table('sessions').select("id", count='exact').execute()
-            users_result = self.supabase.table('users').select("id", count='exact').execute()
+            # Compatible avec version 1.2.0 - pas de count exact
+            sessions_result = self.supabase.table('sessions').select("id").execute()
+            users_result = self.supabase.table('users').select("id").execute()
             
-            sessions_count = sessions_result.count if hasattr(sessions_result, 'count') else 0
-            users_count = users_result.count if hasattr(users_result, 'count') else 0
+            sessions_count = len(sessions_result.data) if sessions_result.data else 0
+            users_count = len(users_result.data) if users_result.data else 0
             
             return {
                 "status": "connected",
@@ -1653,12 +1658,12 @@ def security_stats():
         if not db_manager.is_connected():
             return jsonify({"connected": False, "error": "Database non connectée"}), 503
         
-        # Stats générales
-        sessions_result = db_manager.supabase.table('sessions').select("id", count='exact').execute()
-        users_result = db_manager.supabase.table('users').select("id", count='exact').execute()
+        # Stats générales - compatible version 1.2.0
+        sessions_result = db_manager.supabase.table('sessions').select("id").execute()
+        users_result = db_manager.supabase.table('users').select("id").execute()
         
-        total_sessions = sessions_result.count if hasattr(sessions_result, 'count') else len(sessions_result.data)
-        total_users = users_result.count if hasattr(users_result, 'count') else len(users_result.data)
+        total_sessions = len(sessions_result.data) if sessions_result.data else 0
+        total_users = len(users_result.data) if users_result.data else 0
         
         # Stats bloqués
         blocked_users_result = db_manager.supabase.table('users').select("email, blocked_at, block_reason").eq('is_blocked', True).execute()
