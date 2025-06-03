@@ -31,7 +31,7 @@ SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://pwnvtgfldweunehkrxxb.supabase.
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3bnZ0Z2ZsZHdldW5laGtyeHhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4NzIxMDIsImV4cCI6MjA2NDQ0ODEwMn0.UxXnH-l_UDX4pW29fTAzhh7eznln07ncmE3JZSO75Fk')
 
 # Configuration Email (Gmail gratuit ou Brevo gratuit)
-SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp-relay.brevo.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
 SMTP_USERNAME = os.getenv('SMTP_USERNAME', '8a993d003@smtp-brevo.com')
 SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'hX2nbHa5DcUPWOzt')
